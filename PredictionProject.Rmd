@@ -24,8 +24,6 @@ The data for this assignment comes from (http://groupware.les.inf.puc-rio.br/har
 suppressWarnings(library(caret))
 suppressWarnings(library(randomForest))
 suppressWarnings(library(foreach))
-suppressWarnings(library(doParallel))
-suppressWarnings(library(Hmisc))
 
 # Supress warning messages and reduce the noise in the generated HTML for the writeup
 options(warn=-1)
@@ -45,25 +43,15 @@ testURL <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
 download.file(trainURL, "pml-training.csv", method="curl")
 download.file(testURL, "pml-testing.csv", method="curl")
 
-
 training_data <- read.csv("pml-training.csv", na.strings=c("NA", "") )
 testing_data <- read.csv("pml-testing.csv", na.strings=c("NA", "") )
 ```
 
 ## Clean and Condition the Data
 --------------------------------
-Convert the value types in colum eight (8) to colume () to be type Numeric. In addition ther are a number of columns with very sparce data (empty). These columns do not provide salient characteristics needed for the prediction model. The feature set was reduced to the subset of columns that were completely populated. Prior to training the model the first seven columns of data are removed. These include the user names, timestamps, etc. This provides the feature set for training. 
+Convert the value types in column eight (8) to column (160) to be type Numeric. In addition ther are a number of columns with very sparce data (empty). These columns do not provide salient characteristics needed for the prediction model. The feature set was reduced to the subset of columns that were completely populated. Prior to training the model the first seven columns of data are removed. These include the user names, timestamps, etc. This provides the feature set for training. 
 
 ```{r}
-#for(i in c(8:ncol(training_data)-1)) {
-#  training_data[,i] = as.numeric(as.character(training_data[,i]))
-#}
-#
-#for(i in c(8:ncol(testing_data)-1)) {
-# testing_data[,i] = as.numeric(as.character(testing_data[,i]))
-#}
-
-
 training_data[, 8:ncol(training_data)-1] <- 
   sapply(training_data[, 8:ncol(training_data)-1], 
          function(x) { as.numeric(as.character(x)) })
@@ -72,50 +60,52 @@ testing_data[, 8:ncol(testing_data)-1] <-
   sapply(testing_data[, 8:ncol(testing_data)-1], 
          function(x) { as.numeric(as.character(x)) })
 
-feature_set <- colnames(training_data[colSums(is.na(training_data)) == 0])[-(1:7)]
-model_data <- training_data[feature_set]
-feature_set
+features <- colnames(training_data[colSums(is.na(training_data)) == 0])[-(1:7)]
+features
+
+testing_data <- testing_data[features[features!='classe']]
+
 ```
 
 # Train the Model
 --------------------------------
-The model defined by the cleaned feature set is now ready for training. The training consists of building 5 random forests with 150 trees each. The model training leverages parallel processing provided in the foreach and doParallel packages. Performing parallel processing of the random forests  provided a significant improvement in performance.
+The model defined by the cleaned feature set is now ready for training. The training consists of building 5 random forests with 200 trees each (I orginally had 2500 trees, but the performance very poor). The model training leverages parallel processing provided in the foreach package. Performing parallel processing of the random forests  provided a significant improvement in performance.
 
 ```{r}
+filtered_data <- training_data[features]
 # Seed the system prior to execution
 set.seed(9825)
 
-idx <- createDataPartition(y=model_data$classe, p=0.75, list=FALSE )
-training <- model_data[idx,]
-testing <- model_data[-idx,]
+# Partition the training data into a training and testing subset 
+index <- createDataPartition(y=filtered_data$classe, p=0.75, list=FALSE )
+training <- filtered_data[index,]
+testing <- filtered_data[-index,]
 
-registerDoParallel()
-x <- training[-ncol(training)]
-y <- training$classe
+ptm <- proc.time()
+rf <- foreach(ntree=rep(200, 6), .combine=randomForest::combine, .multicombine=TRUE, .packages='randomForest') %dopar% 
+randomForest(training[-ncol(training)], training$classe, ntree=ntree) 
+exectime <- proc.time() - ptm
+exectime
 
-rf <- foreach(ntree=rep(150, 6), .combine=randomForest::combine, .packages='randomForest') %dopar% {
-randomForest(x, y, ntree=ntree) 
-}
 ```
 
 
 ## Confusion Matrices
 The following shows the confusion matrices for both training and test data sets.
 ```{r}
-predictions1 <- predict(rf, newdata=training)
-confusionMatrix(predictions1,training$classe)
+training_prediction <- predict(rf, newdata=training)
+confusionMatrix(training_prediction,training$classe)
 
-
-predictions2 <- predict(rf, newdata=testing)
-confusionMatrix(predictions2,testing$classe)
+testing_prediction <- predict(rf, newdata=testing)
+confusionMatrix(testing_prediction,testing$classe)
 ```
 
 ## Conclusions and Result Submission
 --------------------------------
 
-The Confusion Matrix indicates the trained model is very accurate. I experimented with several models including Stochastic Gradient Boosting algorithm and PCA. I found the performance to be a challenge with the boosting algorithm and lower accuracy with PCA. 
+The Confusion Matrix indicates the trained model is very accurate. I experimented with several models including Stochastic Gradient Boosting algorithm and PCA. I found the performance to be a challenge with the boosting algorithm and lower accuracy with PCA, the random forest was straight forward to implement and yielded very good results. 
 
-The result on the testing data was approximately 99% accurate. The expectation was that the submitted test results woould have a similar accuracy. The final result was 100% correct on the submission.
+The result on the testing data was approximately 99% accurate. The expectation was that the submitted test results woould have a similar accuracy. The final result was 100% correct on the submission. If there was a larger training set I would have expected there to be some misses.
 
 The following pml_write_files function was provided on the submission page for the results of the project.
 
@@ -129,11 +119,7 @@ pml_write_files = function(x){
   }
 }
 
-
-x <- testing_data
-x <- x[feature_set[feature_set!='classe']]
-answers <- predict(rf, newdata=x)
-
+answers <- predict(rf, newdata=testing_data)
 answers
 
 pml_write_files(answers)
