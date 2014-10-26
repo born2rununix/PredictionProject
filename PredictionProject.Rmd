@@ -1,0 +1,140 @@
+---
+title: "Practical Machine Learning Project"
+author: "born2rununix"
+date: "October 25, 2014"
+output: html_document
+---
+
+Practical Machine Learning - Prediction Project Writeup
+==========================================================
+
+## Introduction
+--------------------------------
+This document describes the analysis I performed for the prediction project for the Coursera course "Practical Machine Learning". All of the work was conducted in (http://www.rstudio.com) using open source packages/libraries.
+
+For this assignment I analyzed the provided data to determine what activity an individual perform.
+To do this I made use of caret and randomForest, this allowed me to generate correct answers for each of the 20 test data cases provided in this assignment.
+
+## Data
+--------------------------------
+The data for this assignment comes from (http://groupware.les.inf.puc-rio.br/har), and contains information from accelerometers that were located on the belt, forearm, arm, and dumbbell of the study participants. The data are split into a training group (19,622) observations and testing group (20 observations).  Participants in this study were asked to dperform "Dumbbell Biceps Curl" five different ways, including using correct form and four common mistakes. 
+
+```{r, echo=FALSE}
+# Load the dependencies
+suppressWarnings(library(caret))
+suppressWarnings(library(randomForest))
+suppressWarnings(library(foreach))
+suppressWarnings(library(doParallel))
+suppressWarnings(library(Hmisc))
+
+# Supress warning messages and reduce the noise in the generated HTML for the writeup
+options(warn=-1)
+
+```
+
+## Ingest the Data
+--------------------------------
+
+Both the training and testing data sets are downloaded from the URL provided on the course project page. The training and test data sets were then loaded using the the na.string parameter to replace empty strings with the value of NA.
+
+```{r}
+
+trainURL<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testURL <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+download.file(trainURL, "pml-training.csv", method="curl")
+download.file(testURL, "pml-testing.csv", method="curl")
+
+
+training_data <- read.csv("pml-training.csv", na.strings=c("NA", "") )
+testing_data <- read.csv("pml-testing.csv", na.strings=c("NA", "") )
+```
+
+## Clean and Condition the Data
+--------------------------------
+Convert the value types in colum eight (8) to colume () to be type Numeric. In addition ther are a number of columns with very sparce data (empty). These columns do not provide salient characteristics needed for the prediction model. The feature set was reduced to the subset of columns that were completely populated. Prior to training the model the first seven columns of data are removed. These include the user names, timestamps, etc. This provides the feature set for training. 
+
+```{r}
+#for(i in c(8:ncol(training_data)-1)) {
+#  training_data[,i] = as.numeric(as.character(training_data[,i]))
+#}
+#
+#for(i in c(8:ncol(testing_data)-1)) {
+# testing_data[,i] = as.numeric(as.character(testing_data[,i]))
+#}
+
+
+training_data[, 8:ncol(training_data)-1] <- 
+  sapply(training_data[, 8:ncol(training_data)-1], 
+         function(x) { as.numeric(as.character(x)) })
+
+testing_data[, 8:ncol(testing_data)-1] <- 
+  sapply(testing_data[, 8:ncol(testing_data)-1], 
+         function(x) { as.numeric(as.character(x)) })
+
+feature_set <- colnames(training_data[colSums(is.na(training_data)) == 0])[-(1:7)]
+model_data <- training_data[feature_set]
+feature_set
+```
+
+# Train the Model
+--------------------------------
+The model defined by the cleaned feature set is now ready for training. The training consists of building 5 random forests with 150 trees each. The model training leverages parallel processing provided in the foreach and doParallel packages. Performing parallel processing of the random forests  provided a significant improvement in performance.
+
+```{r}
+# Seed the system prior to execution
+set.seed(9825)
+
+idx <- createDataPartition(y=model_data$classe, p=0.75, list=FALSE )
+training <- model_data[idx,]
+testing <- model_data[-idx,]
+
+registerDoParallel()
+x <- training[-ncol(training)]
+y <- training$classe
+
+rf <- foreach(ntree=rep(150, 6), .combine=randomForest::combine, .packages='randomForest') %dopar% {
+randomForest(x, y, ntree=ntree) 
+}
+```
+
+
+## Confusion Matrices
+The following shows the confusion matrices for both training and test data sets.
+```{r}
+predictions1 <- predict(rf, newdata=training)
+confusionMatrix(predictions1,training$classe)
+
+
+predictions2 <- predict(rf, newdata=testing)
+confusionMatrix(predictions2,testing$classe)
+```
+
+## Conclusions and Result Submission
+--------------------------------
+
+The Confusion Matrix indicates the trained model is very accurate. I experimented with several models including Stochastic Gradient Boosting algorithm and PCA. I found the performance to be a challenge with the boosting algorithm and lower accuracy with PCA. 
+
+The result on the testing data was approximately 99% accurate. The expectation was that the submitted test results woould have a similar accuracy. The final result was 100% correct on the submission.
+
+The following pml_write_files function was provided on the submission page for the results of the project.
+
+
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+
+x <- testing_data
+x <- x[feature_set[feature_set!='classe']]
+answers <- predict(rf, newdata=x)
+
+answers
+
+pml_write_files(answers)
+```
