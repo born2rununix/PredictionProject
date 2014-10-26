@@ -1,4 +1,4 @@
 PredictionProject
 =================
 
-Prediction Project for Practical MAchine Learning
+Prediction Project for Practical Machine Learning
